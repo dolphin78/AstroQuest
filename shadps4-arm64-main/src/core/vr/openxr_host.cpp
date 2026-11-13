@@ -28,6 +28,8 @@
 #include "common/singleton.h"
 #include "common/thread.h"
 #include "core/known_title.h"
+#include "core/vr/held_pad.h"
+#include "core/vr/held_pad_one_hand.h"
 #include "core/vr/late_frame_wait.h"
 #include "core/vr/openxr_host.h"
 #include "input/controller.h"
@@ -500,6 +502,18 @@ struct OpenXrHost::Impl {
     XrVector3f pad_position{};
     XrVector3f pad_velocity{};
     XrTime pad_time{};
+    // How it is held, as far as the hands say (core/vr/held_pad.h): the last pitch they told,
+    // for while they cannot; how they have it turned, for a gamepad without motion sensors;
+    // whether each hand is closed around something, and where each holds it, for when only
+    // one does (core/vr/held_pad_one_hand.h), and which one that was last.
+    float held_pitch{};
+    HeldPad::Quat held_orientation{};
+    XrTime held_time{};
+    bool held_shown{};
+    HeldPadOneHand::GripDetector grip_detectors[2];
+    HeldPadOneHand::Grip grips[2]{HeldPadOneHand::Grip{0}, HeldPadOneHand::Grip{1}};
+    XrTime grip_learned_time{};
+    int one_hand{-1};
 
     // For the log.
     bool motion_warned{};
@@ -515,6 +529,7 @@ struct OpenXrHost::Impl {
     u32 palm_samples{};
     float palm_distance{};
     u32 pad_samples{};
+    u32 one_hand_samples{};
     XrVector3f pad_from_head{};
     u32 controller_samples{};
     XrPosef controller_pose{{0.0f, 0.0f, 0.0f, 1.0f}, {}};
@@ -1532,6 +1547,8 @@ struct OpenXrHost::Impl {
         session_running = false;
         have_frame = false;
         pad_seen = false;
+        held_shown = false;
+        one_hand = -1;
         Runtime::Instance().ClearPadPosition();
         Runtime::Instance().EnableViewGestures(false);
         {
@@ -1999,8 +2016,18 @@ struct OpenXrHost::Impl {
         }
     }
 
-    /// Where the palm of a hand is, if the headset sees it.
-    std::optional<XrVector3f> LocatePalm(int hand, XrTime time) {
+    struct Palm {
+        XrVector3f position;
+        bool orientation_valid;
+        XrQuaternionf orientation;
+        /// How far the middle, ring and little fingers are curled around something, 0 to 1;
+        /// -1 if the headset cannot tell (HeldPadOneHand::GripCurl).
+        float curl;
+    };
+
+    /// Where the palm of a hand is, if the headset sees it, how it is turned and how its
+    /// fingers are curled.
+    std::optional<Palm> LocatePalm(int hand, XrTime time) {
         XrHandJointLocationEXT joints[XR_HAND_JOINT_COUNT_EXT];
         XrHandJointLocationsEXT locations{XR_TYPE_HAND_JOINT_LOCATIONS_EXT};
         locations.jointCount = XR_HAND_JOINT_COUNT_EXT;
@@ -2016,7 +2043,16 @@ struct OpenXrHost::Impl {
         if ((palm.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) == 0) {
             return std::nullopt;
         }
-        return palm.pose.position;
+        static_assert(HeldPadOneHand::JointCount == XR_HAND_JOINT_COUNT_EXT);
+        HeldPadOneHand::Joint fingers[HeldPadOneHand::JointCount];
+        for (int i = 0; i < HeldPadOneHand::JointCount; ++i) {
+            fingers[i] = {(joints[i].locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0,
+                          {joints[i].pose.position.x, joints[i].pose.position.y,
+                           joints[i].pose.position.z}};
+        }
+        return Palm{palm.pose.position,
+                    (palm.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0,
+                    palm.pose.orientation, HeldPadOneHand::GripCurl(fingers)};
     }
 
     /// Where a hand holds something, by where the runtime has the controller of that hand.
@@ -2041,25 +2077,185 @@ struct OpenXrHost::Impl {
         return location.pose.position;
     }
 
+    static HeldPad::Vec ToHeld(const XrVector3f& v) {
+        return {v.x, v.y, v.z};
+    }
+
+    static HeldPad::Quat ToHeld(const XrQuaternionf& q) {
+        return {q.x, q.y, q.z, q.w};
+    }
+
+    static HeldPadOneHand::Palm GripPalm(const Palm& palm) {
+        return {ToHeld(palm.position), palm.orientation_valid, ToHeld(palm.orientation)};
+    }
+
+    /// For a gamepad without motion sensors, how the hands have it turned, following them a
+    /// little behind (they tremble, and what is seen of them more so); afresh after a gap.
+    HeldPad::Quat FollowHeld(const HeldPad::Quat& to, XrTime time) {
+        static constexpr float FollowTime = 0.06f;
+        const float elapsed =
+            held_shown && time > held_time ? static_cast<float>(time - held_time) * 1e-9f : 1.0f;
+        held_orientation =
+            elapsed < 0.25f
+                ? HeldPad::Towards(held_orientation, to, 1.0f - std::exp(-elapsed / FollowTime))
+                : to;
+        held_shown = true;
+        held_time = time;
+        return held_orientation;
+    }
+
+    /// The gamepad's middle is at `centre` (in the local space) at `time`.
+    void PlacePad(const HeldPad::Vec& at, XrTime time) {
+        const XrVector3f centre{at.x, at.y, at.z};
+        if (pad_seen && time > pad_time) {
+            const float elapsed = static_cast<float>(time - pad_time) * 1e-9f;
+            if (elapsed < 0.1f) {
+                const float blend = 0.4f;
+                pad_velocity.x += ((centre.x - pad_position.x) / elapsed - pad_velocity.x) * blend;
+                pad_velocity.y += ((centre.y - pad_position.y) / elapsed - pad_velocity.y) * blend;
+                pad_velocity.z += ((centre.z - pad_position.z) / elapsed - pad_velocity.z) * blend;
+            }
+        } else {
+            pad_velocity = {};
+        }
+        pad_position = centre;
+        pad_time = time;
+
+        // For the log: the same, as seen from the head.
+        const XrQuaternionf to_head{-head_pose.orientation.x, -head_pose.orientation.y,
+                                    -head_pose.orientation.z, head_pose.orientation.w};
+        const XrVector3f offset =
+            Rotate(to_head, {centre.x - head_pose.position.x, centre.y - head_pose.position.y,
+                             centre.z - head_pose.position.z});
+        pad_from_head.x += offset.x;
+        pad_from_head.y += offset.y;
+        pad_from_head.z += offset.z;
+        ++pad_samples;
+
+        Runtime::Instance().UpdatePadPosition({centre.x, centre.y, centre.z},
+                                              {pad_velocity.x, pad_velocity.y, pad_velocity.z});
+    }
+
     /// A gamepad cannot be tracked, the hands that hold it can: both palms a controller's width
-    /// apart give away where it is and which way it points.
+    /// apart give away where it is and how it is turned, and so does one hand closed around a
+    /// grip, once it has been seen where that hand holds it (core/vr/held_pad_one_hand.h). A
+    /// gamepad with motion sensors is turned by those (Runtime::UpdatePadGyro), the hands only
+    /// keeping its heading from drifting; one without them is turned by the hands.
     void UpdatePad(XrTime time) {
         auto& runtime = Runtime::Instance();
         bool seen = false;
-        std::optional<XrVector3f> left;
-        std::optional<XrVector3f> right;
         int source = 0;
-        // (Hands that hold the headset's own controllers hold no gamepad.)
-        if (has_hand_tracking && !controllers_used && hand_trackers[0] != XR_NULL_HANDLE &&
-            hand_trackers[1] != XR_NULL_HANDLE) {
-            left = LocatePalm(0, time);
-            right = LocatePalm(1, time);
-            source = 1;
+        // How the gamepad's own sensors have it turned, if it has any.
+        std::optional<HeldPad::Quat> sensors;
+        if (const auto attitude = runtime.PadAttitudeInHost()) {
+            sensors = HeldPad::Quat{attitude->x, attitude->y, attitude->z, attitude->w};
         }
-        if (!(left && right) && use_grips && actions_synced && !controllers_used) {
-            left = LocateGrip(0, time);
-            right = LocateGrip(1, time);
-            source = 2;
+        const float tilt = runtime.GetConfig().pad_tilt * 3.14159265f / 180.0f;
+
+        // (Hands that hold the headset's own controllers hold no gamepad.)
+        std::optional<Palm> palms[2];
+        bool gripping[2]{};
+        const bool hands_tracked = has_hand_tracking && !controllers_used &&
+                                   hand_trackers[0] != XR_NULL_HANDLE &&
+                                   hand_trackers[1] != XR_NULL_HANDLE;
+        for (int hand = 0; hand < 2; ++hand) {
+            if (hands_tracked) {
+                palms[hand] = LocatePalm(hand, time);
+            }
+            gripping[hand] = grip_detectors[hand].Update(palms[hand] ? palms[hand]->curl : -1.0f);
+        }
+
+        // Two places a gamepad's width apart: the palms, or where the runtime has its own
+        // controllers.
+        const auto by_two = [&](const XrVector3f& left, const XrVector3f& right, bool by_palms) {
+            HeldPad::Hands hands;
+            hands.left_palm = ToHeld(left);
+            hands.right_palm = ToHeld(right);
+            if (by_palms && palms[0]->orientation_valid && palms[1]->orientation_valid) {
+                // (A palm's -Z runs along the bone of its middle finger, towards the fingers.)
+                hands.pointing_known = true;
+                hands.left_pointing = ToHeld(Rotate(palms[0]->orientation, {0.0f, 0.0f, -1.0f}));
+                hands.right_pointing = ToHeld(Rotate(palms[1]->orientation, {0.0f, 0.0f, -1.0f}));
+            }
+            ++palm_samples;
+            palm_distance += HeldPad::Length(HeldPad::Sub(hands.right_palm, hands.left_palm));
+            // Hands further apart, or closer together, are not holding a controller.
+            const auto held = HeldPad::Locate(hands, tilt, held_pitch);
+            if (!held) {
+                return false;
+            }
+            const HeldPad::Vec middle =
+                HeldPad::Scale(HeldPad::Add(hands.left_palm, hands.right_palm), 0.5f);
+            // Tipped up or down, the middle is ahead of and above the palms along the
+            // gamepad's own axes: where its sensors say how it is turned, along those.
+            const HeldPad::Vec centre =
+                sensors ? HeldPad::CentreFrom(middle, *sensors) : held->position;
+            if (held->turned_known) {
+                runtime.UpdatePadYawReference(held->yaw);
+                if (held->pitch_measured) {
+                    held_pitch = held->pitch;
+                }
+                if (by_palms) {
+                    const HeldPad::Quat turned =
+                        sensors ? *sensors : FollowHeld(held->orientation, time);
+                    if (!sensors) {
+                        runtime.UpdatePadHeldOrientation(
+                            {turned.x, turned.y, turned.z, turned.w});
+                    }
+                    // Where each hand holds it, for when only one does.
+                    const float elapsed =
+                        grip_learned_time != 0 && time > grip_learned_time
+                            ? std::min(static_cast<float>(time - grip_learned_time) * 1e-9f, 0.1f)
+                            : 0.0f;
+                    grip_learned_time = time;
+                    for (int hand = 0; hand < 2; ++hand) {
+                        grips[hand].Learn(GripPalm(*palms[hand]), centre, turned, elapsed);
+                    }
+                }
+            }
+            PlacePad(centre, time);
+            return true;
+        };
+
+        bool both_hands = false;
+        if (palms[0] && palms[1]) {
+            source = 1;
+            seen = both_hands = by_two(palms[0]->position, palms[1]->position, true);
+        }
+        if (!seen && hands_tracked) {
+            // One hand, closed around a grip.
+            std::optional<HeldPadOneHand::Palm> grip_palms[2];
+            for (int hand = 0; hand < 2; ++hand) {
+                if (palms[hand]) {
+                    grip_palms[hand] = GripPalm(*palms[hand]);
+                }
+            }
+            if (const auto one =
+                    HeldPadOneHand::Locate(grip_palms, gripping, grips, sensors, one_hand)) {
+                if (one->hand_turn_known) {
+                    runtime.UpdatePadYawReference(HeldPad::YawOf(one->hand_orientation));
+                }
+                if (!sensors) {
+                    const HeldPad::Quat turned = FollowHeld(one->orientation, time);
+                    runtime.UpdatePadHeldOrientation({turned.x, turned.y, turned.z, turned.w});
+                }
+                PlacePad(one->position, time);
+                if (one->hand != one_hand) {
+                    LOG_INFO(Core_Vr, "The gamepad is held in the {} hand alone",
+                             one->hand == 0 ? "left" : "right");
+                }
+                one_hand = one->hand;
+                ++one_hand_samples;
+                source = 1;
+                seen = true;
+            }
+        }
+        if (both_hands) {
+            one_hand = -1;
+        }
+        if (!seen && !(palms[0] && palms[1]) && use_grips && actions_synced && !controllers_used) {
+            std::optional<XrVector3f> left = LocateGrip(0, time);
+            std::optional<XrVector3f> right = LocateGrip(1, time);
             if (left && right) {
                 // The headset's own controllers, lying side by side on a table, are not a
                 // gamepad in two hands: hands are never quite still, and never far from the
@@ -2076,71 +2272,14 @@ struct OpenXrHost::Impl {
                 const float reach = std::hypot(middle.x - head_pose.position.x,
                                                middle.y - head_pose.position.y,
                                                middle.z - head_pose.position.z);
-                if (now - grip_moved > std::chrono::seconds{4} || reach > 0.9f) {
-                    left.reset();
-                    right.reset();
+                if (now - grip_moved <= std::chrono::seconds{4} && reach <= 0.9f) {
+                    source = 2;
+                    seen = by_two(*left, *right, false);
                 }
             }
         }
-        if (left && right) {
-            {
-                const XrVector3f across{right->x - left->x, right->y - left->y,
-                                        right->z - left->z};
-                const float distance =
-                    std::sqrt(across.x * across.x + across.y * across.y + across.z * across.z);
-                ++palm_samples;
-                palm_distance += distance;
-                // Hands further apart, or closer together, are not holding a controller.
-                if (distance > 0.05f && distance < 0.32f) {
-                    XrVector3f centre{(left->x + right->x) * 0.5f, (left->y + right->y) * 0.5f,
-                                      (left->z + right->z) * 0.5f};
-                    const float level = std::sqrt(across.x * across.x + across.z * across.z);
-                    if (level > 0.6f * distance) {
-                        // The line from the left to the right palm is the controller's
-                        // sideways axis; its heading follows from that.
-                        const float yaw = std::atan2(-across.z, across.x);
-                        runtime.UpdatePadYawReference(yaw);
-                        // The palms close around the grips, which sit behind and below the
-                        // middle of the controller.
-                        centre.x += -std::sin(yaw) * 0.035f;
-                        centre.z += -std::cos(yaw) * 0.035f;
-                    }
-                    centre.y += 0.015f;
-
-                    if (pad_seen && time > pad_time) {
-                        const float elapsed = static_cast<float>(time - pad_time) * 1e-9f;
-                        if (elapsed < 0.1f) {
-                            const float blend = 0.4f;
-                            pad_velocity.x +=
-                                ((centre.x - pad_position.x) / elapsed - pad_velocity.x) * blend;
-                            pad_velocity.y +=
-                                ((centre.y - pad_position.y) / elapsed - pad_velocity.y) * blend;
-                            pad_velocity.z +=
-                                ((centre.z - pad_position.z) / elapsed - pad_velocity.z) * blend;
-                        }
-                    } else {
-                        pad_velocity = {};
-                    }
-                    pad_position = centre;
-                    pad_time = time;
-
-                    // For the log: the same, as seen from the head.
-                    const XrQuaternionf to_head{-head_pose.orientation.x, -head_pose.orientation.y,
-                                                -head_pose.orientation.z, head_pose.orientation.w};
-                    const XrVector3f offset =
-                        Rotate(to_head, {centre.x - head_pose.position.x,
-                                         centre.y - head_pose.position.y,
-                                         centre.z - head_pose.position.z});
-                    pad_from_head.x += offset.x;
-                    pad_from_head.y += offset.y;
-                    pad_from_head.z += offset.z;
-                    ++pad_samples;
-
-                    runtime.UpdatePadPosition({centre.x, centre.y, centre.z},
-                                              {pad_velocity.x, pad_velocity.y, pad_velocity.z});
-                    seen = true;
-                }
-            }
+        if (!seen) {
+            one_hand = -1;
         }
         // Once more when the hands are lost, so that the last position is no longer trusted.
         if (!seen && pad_seen) {
@@ -2553,12 +2692,13 @@ struct OpenXrHost::Impl {
             const float held = pad_samples != 0 ? 1.0f / static_cast<float>(pad_samples) : 0.0f;
             LOG_INFO(Core_Vr,
                      "Hands: both seen {:.0f}% of the time, {:.2f} m apart; holding the "
-                     "controller {:.0f}%, on average {:.2f} right, {:.2f} up, {:.2f} ahead of "
-                     "the head",
+                     "controller {:.0f}% (in one hand {:.0f}%), on average {:.2f} right, {:.2f} "
+                     "up, {:.2f} ahead of the head",
                      100.0f * static_cast<float>(palm_samples) / frames,
                      palm_samples != 0 ? palm_distance / static_cast<float>(palm_samples) : 0.0f,
-                     100.0f * static_cast<float>(pad_samples) / frames, pad_from_head.x * held,
-                     pad_from_head.y * held, -pad_from_head.z * held);
+                     100.0f * static_cast<float>(pad_samples) / frames,
+                     100.0f * static_cast<float>(one_hand_samples) / frames,
+                     pad_from_head.x * held, pad_from_head.y * held, -pad_from_head.z * held);
         }
         if (controllers_used) {
             // Where the one that is the controller in the game is, as seen from the head, and
@@ -2615,6 +2755,7 @@ struct OpenXrHost::Impl {
         palm_samples = 0;
         palm_distance = 0.0f;
         pad_samples = 0;
+        one_hand_samples = 0;
         pad_from_head = {};
         controller_samples = 0;
         end_frame_time = 0.0;

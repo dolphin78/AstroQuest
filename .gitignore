@@ -27,6 +27,7 @@
 !/tools/
 /tools/*/
 !/tools/probes/
+!/tools/held-pad-viewer/
 !/tools/re/
 !/tools/shims/
 !/tools/tests/

@@ -2,7 +2,8 @@
 // (quest-host/cpp/panel_place.h): along the ground the way the face is turned, at the eyes'
 // height less the drop, upright and facing the head, whatever the head's tilt and roll.
 //
-//   clang-cl /std:c++latest /EHsc -fuse-ld=lld /I quest-host/cpp tools/tests/panel_place_test.cpp
+//   clang-cl /std:c++latest /EHsc -fuse-ld=lld /I quest-host/cpp
+//       /I shadps4-arm64-main/src/core/vr tools/tests/panel_place_test.cpp
 //       /Fe:build/tests/panel_place_test.exe
 #include <cmath>
 #include <cstdio>
@@ -31,12 +32,7 @@ static float Radians(float degrees) {
     return degrees * Pi / 180.0f;
 }
 
-static Quat Multiply(const Quat& a, const Quat& b) {
-    return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
-            a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-            a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
-            a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
-}
+using HeldPad::Multiply;
 
 /// A head turned `left` degrees to the left, then tilted `up` degrees up, then rolled `roll`.
 static Quat HeadTurned(float left, float up, float roll) {
