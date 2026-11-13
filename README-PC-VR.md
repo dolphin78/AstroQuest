@@ -95,11 +95,10 @@ in a small window at every start.
    side, and after a few seconds the headset switches from the desktop to the game.
 5. Pick up the controller. Where it is in the game comes from your hands: put the headset's
    own controllers aside (hand tracking on in the headset) and the headset sees your hands
-   around the gamepad. Virtual Desktop has to pass hand tracking on to the PC (its setting for
-   forwarding tracking data); where it does not, the emulator takes the places Virtual
-   Desktop gives the Touch controllers it makes up from the hands while the real ones lie
-   unused. With neither, the controller floats at a fixed spot in front of you and only turns
-   with the gamepad's motion sensors. The console window says which it is ("The gamepad is
+   around the gamepad, both of them or one. How the hands get to the PC, with Virtual
+   Desktop or with Meta Horizon Link, is in "The gamepad placed by your hands" below.
+   Without them, the controller floats at a fixed spot in front of you and only turns with
+   the gamepad's motion sensors. The console window says which it is ("The gamepad is
    placed in the game by where the hands are, which ...").
 
 The other order works too: start the game at the PC and put the headset on afterwards. The
@@ -162,9 +161,55 @@ In the game:
   (If it ever waits although the headset is on and shows the game: `pause=0`.)
 - To quit, close the game's window (or the console window).
 
+### The gamepad placed by your hands
+
+On a PlayStation VR the camera follows the controller's light bar, and the game is made for
+that: it draws the controller in your hands, you aim the catapult and the throwing stars
+with it, and the first screen has you hold it in an outline. Nothing tracks where a
+DualSense is on a PC, but a Quest sees your hands, and they are where the controller is.
+
+**Setting it up**
+
+1. The DualSense is connected to the PC (USB or Bluetooth), not to the headset.
+2. Hand tracking is on in the headset (Quest: Settings > Movement tracking > Hand and body
+   tracking).
+3. The hands reach the PC:
+   - **Meta Horizon Link** (Air Link or a cable): in the Meta Horizon Link app on the PC,
+     Settings > Beta > **Developer Runtime Features** on. Without it Link gives games no
+     hands at all.
+   - **Virtual Desktop**: its runtime (VDXR) passes the same OpenXR hand tracking on (its
+     setting for forwarding tracking data); not yet tried with one-handed holding. Where it
+     does not, the emulator takes the places Virtual Desktop gives the Touch controllers it
+     makes up from the hands while the real ones lie unused: holding with both hands still
+     places the controller, holding with one does not (those places have no fingers).
+4. The Touch controllers lie aside: the headset tracks hands only while they are not held.
+5. Start the game and pick up the DualSense. The console window says `The gamepad is placed
+   in the game by where the hands are, which the headset tracks` (or `... which its runtime
+   tells by the places of its own controllers`: the Virtual Desktop fallback above).
+
+`hands=0` in `pc-vr\settings.txt` goes without: the controller then stays at a fixed spot in
+front of you (see below), turned by its own motion sensors only.
+
+**What the hands do**
+
+- **Both hands** 5 to 32 cm apart: the controller is between the palms, a little ahead of
+  and above them.
+- **One hand**: a hand whose middle, ring and little fingers are curled round a grip holds
+  it, and the controller stays in that hand. Where each hand holds it is learned while both
+  do (half a second is enough), and with a DualSense a hand only counts while the way it
+  holds the controller agrees with the controller's own sensors, within 35 degrees.
+- **A DualSense (or DualShock 4) is turned by its own gyroscope and accelerometer**, which are
+  quick and smooth; the hands keep its heading from drifting and set the way it faces at the
+  start, and its middle is found along its real tilt, so it sits in the grip.
+- **A gamepad without motion sensors** (an Xbox pad, say) is turned by the hands: its
+  heading from the line between the palms, its tilt from the way they point, smoothed.
+  `"pad_tilt": <degrees>` in `pc-vr\user\vr.json` is added to how far up they are taken to
+  point, for such a gamepad shown pointing higher or lower than it is held.
+
 ### The gamepad in the game, where nothing tracks it
 
-Without tracked hands (Virtual Desktop without hand tracking passed on, SteamVR, Pimax...),
+Without tracked hands (Link without Developer Runtime Features, Virtual Desktop without hand
+tracking passed on, SteamVR, Pimax...),
 the gamepad in the game hangs before you: 17 cm below your eyes and half a metre ahead,
 which is where the game looks for it when it starts. That is in the way of the view for
 some, and too high or too low for what the controller has to be held to elsewhere. **Hold
@@ -486,6 +531,22 @@ Things that had to be right, for whoever works on this again:
   Desktop has its own only while it streams to the headset, and names the PC's until then.
   Every port plays on a device of its own, never on "the default device" as such (see
   "Fixed and added in 0.19").
+
+## Added in 0.23-handtrack (2026-11-13)
+
+A build of [dolphin78's fork](https://github.com/dolphin78/AstroQuest), branch
+`upstream-fixes`:
+
+- **The gamepad placed by the hands, better** (see "The gamepad placed by your hands"): held
+  in one hand as well as in both, told by the curl of the fingers; a DualSense's heading kept
+  by the hands with one hand too, and its starting direction set by them; a gamepad without
+  motion sensors turned and tilted by the hands instead of always pointing ahead; how to get
+  hand tracking through Meta Horizon Link written down.
+- **Five fixes from upstream shadPS4**: sticks and triggers no longer smoothed over 33 ms
+  (#5340); `MemoryManager::Free` no longer unmaps past what it releases (#5462); a save's
+  `param.sfo` kept after an unclean exit (#5630); no deadlock when shutdown is entered twice
+  (#5569); a software Vulkan device never chosen by itself (#4904).
+- The launcher asks dolphin78/AstroQuest whether a newer release is out.
 
 ## Fixed and added in 0.23 (2026-10-21)
 
@@ -824,7 +885,8 @@ is `pc-vr\user\log\shad_log.txt` (the start before it: `shad_log.prev.txt`). Wha
 | `Frames are shown through 3 images of 2880x1536` | the picture's size and format in the runtime |
 | `Headset: the title delivered 60.0 frames a second (20 ms the longest wait for one, 0 waits of more than 50 ms), 60.0 were shown, the headset took 120.0 pictures a second` | every ten seconds: the game's frame rate against the stream's, and how badly it hitched |
 | `pictures were shown N degrees from where they were drawn for` | how much the compositor had to turn pictures: a few degrees while the head turns, next to nothing at rest |
-| `Hands: both seen N% of the time ... holding the controller N%` | what hand tracking gave |
+| `Hands: both seen N% of the time ... holding the controller N% (in one hand N%)` | what hand tracking gave, every ten seconds; never seen means no hands reach the PC (Link: Developer Runtime Features) |
+| `The gamepad is held in the left hand alone` (or right) | one hand holds it, told by the curl of its fingers |
 | `Controller 1 connected: ... (motion sensors yes, touchpad yes, light yes)` | what Windows handed over of the gamepad |
 | `Controller ... cannot be opened and is not used: ...` | Windows lists a gamepad that something else holds, or that is just going away |
 | `The controller's touchpad feels a finger` | the first touch of the gamepad's own touchpad arrived |

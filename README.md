@@ -74,7 +74,8 @@ over Virtual Desktop and fixed since. Expect rough edges, and please report what
 ## Installing: Quest 3 on its own
 
 Download `AstroQuest-<version>-Quest3.apk` from the
-[latest release](https://github.com/bigmak94/AstroQuest/releases/latest), then:
+[latest release of bigmak94/AstroQuest](https://github.com/bigmak94/AstroQuest/releases/latest)
+(this fork's releases are PC only), then:
 
 1. **Install the app.** Connect the headset to the computer with a USB cable, allow USB
    debugging in the headset, and run
@@ -174,7 +175,7 @@ does not show it. `adb shell rm -rf /data/local/tmp/astro` deletes it (about 13 
 ## Installing: PC VR through Virtual Desktop
 
 Download `AstroQuest-<version>-PC-VR-Windows.zip` from the
-[latest release](https://github.com/bigmak94/AstroQuest/releases/latest), then:
+[latest release](https://github.com/dolphin78/AstroQuest/releases/latest), then:
 
 1. **Unzip it** into a folder with a short path, e.g. `C:\Games\AstroQuest`. Some of the
    game's files have long names, and the emulator cannot open a file whose full path is
@@ -197,9 +198,11 @@ Download `AstroQuest-<version>-PC-VR-Windows.zip` from the
    frame rate, the game's language (Windows' own unless you choose another) and the field of
    view; Play starts the game, and the headset switches to it after a few seconds.
 
-For the controller to be placed by your hands, turn on hand tracking in the headset and let
-Virtual Desktop forward tracking data to the PC. The Touch controller layout, all settings and
-what to do when something does not work are in [README-PC-VR.md](README-PC-VR.md).
+For the controller to be placed by your hands (both of them or one), turn on hand tracking in
+the headset, put the Touch controllers aside, and let the hands reach the PC: Virtual Desktop
+forwards tracking data; with Meta Horizon Link, turn on **Developer Runtime Features** (Meta
+Horizon Link app on the PC, Settings > Beta). The details, the Touch controller layout, all
+settings and what to do when something does not work are in [README-PC-VR.md](README-PC-VR.md).
 
 ## Common questions
 
@@ -245,7 +248,7 @@ build running through Steam's Proton with WiVRn; their recipe is in
 Clone with the submodules:
 
 ```sh
-git clone --recurse-submodules https://github.com/bigmak94/AstroQuest.git
+git clone --recurse-submodules https://github.com/dolphin78/AstroQuest.git
 ```
 
 Everything builds on Windows from Git Bash, without admin rights, with a portable toolchain
