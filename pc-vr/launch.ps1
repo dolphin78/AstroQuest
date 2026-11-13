@@ -94,7 +94,7 @@ function Start-UpdateCheck {
         $client.Timeout = [TimeSpan]::FromSeconds(10)
         $client.DefaultRequestHeaders.UserAgent.ParseAdd("AstroQuest-launcher")
         $client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json")
-        return $client.GetStringAsync("https://api.github.com/repos/bigmak94/AstroQuest/releases/latest")
+        return $client.GetStringAsync("https://api.github.com/repos/dolphin78/AstroQuest/releases/latest")
     } catch { return $null }
 }
 # The line to tell of a newer release than this one, "" where there is none (or no answer
@@ -108,7 +108,7 @@ function Get-UpdateNotice($request, [int]$wait = 1500) {
     $latest = ConvertTo-ReleaseVersion $tag
     $own = ConvertTo-ReleaseVersion (Get-OwnVersion)
     if ($null -eq $latest -or $null -eq $own -or $latest -le $own) { return "" }
-    return ("AstroQuest " + $tag.TrimStart("v") + " is out (this is " + (Get-OwnVersion) + "): https://github.com/bigmak94/AstroQuest/releases/latest")
+    return ("AstroQuest " + $tag.TrimStart("v") + " is out (this is " + (Get-OwnVersion) + "): https://github.com/dolphin78/AstroQuest/releases/latest")
 }
 $updateRequest = Start-UpdateCheck
 

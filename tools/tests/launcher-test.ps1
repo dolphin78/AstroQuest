@@ -204,7 +204,7 @@ Check "0.22 is later than 0.21.1" ((ConvertTo-ReleaseVersion "0.22") -gt (Conver
 $script:ownVersion = "0.22"
 function Get-OwnVersion { return $script:ownVersion }
 $answer = { param($tag) [System.Threading.Tasks.Task]::FromResult('{"tag_name":"' + $tag + '","name":"AstroQuest"}') }
-Check "A later release is told of" (Get-UpdateNotice (& $answer "v0.23")) "AstroQuest 0.23 is out (this is 0.22): https://github.com/bigmak94/AstroQuest/releases/latest"
+Check "A later release is told of" (Get-UpdateNotice (& $answer "v0.23")) "AstroQuest 0.23 is out (this is 0.22): https://github.com/dolphin78/AstroQuest/releases/latest"
 Check "The same release is not" (Get-UpdateNotice (& $answer "v0.22")) ""
 Check "An earlier one is not" (Get-UpdateNotice (& $answer "v0.21.1")) ""
 Check "A tag that is no version is not" (Get-UpdateNotice (& $answer "latest")) ""
