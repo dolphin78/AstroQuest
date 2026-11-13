@@ -1,8 +1,9 @@
-// Checks what the Quest app makes of two hands holding a gamepad (quest-host/cpp/held_pad.h):
-// where the gamepad is, which way it is turned, how far it is rolled and how far its front
-// is tilted up, each with the right sign.
+// Checks what the Quest app and the emulator make of two hands holding a gamepad
+// (shadps4-arm64-main/src/core/vr/held_pad.h): where the gamepad is, which way it is turned,
+// how far it is rolled and how far its front is tilted up, each with the right sign.
 //
-//   clang-cl /std:c++latest /EHsc -fuse-ld=lld /I quest-host/cpp tools/tests/held_pad_test.cpp
+//   clang-cl /std:c++latest /EHsc -fuse-ld=lld /I shadps4-arm64-main/src/core/vr
+//       tools/tests/held_pad_test.cpp
 //       /Fe:build/tests/held_pad_test.exe
 #include <cmath>
 #include <cstdio>

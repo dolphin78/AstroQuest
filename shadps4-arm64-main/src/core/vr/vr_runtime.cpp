@@ -129,6 +129,7 @@ FileConfig LoadFileConfig() {
                                      (*it)[2].get<float>()};
             }
             config.pad_follows_head = json.value("pad_anchor", "head") != "seat";
+            config.pad_tilt = json.value("pad_tilt", config.pad_tilt);
             if (const auto it = json.find("fov_tan");
                 it != json.end() && it->is_array() && it->size() == 4) {
                 config.fov = {(*it)[0].get<float>(), (*it)[1].get<float>(), (*it)[2].get<float>(),
@@ -519,6 +520,15 @@ void Runtime::UpdatePadGyro(const Vec3& angular_velocity) {
         pad_attitude = sine > 1e-6f ? FromAxisAngle({axis.x / sine, axis.y / sine, axis.z / sine},
                                                     std::atan2(sine, measured_up.y))
                                     : Quat{};
+        // Turned the way the hands around it say, if they have just said.
+        if (pad_yaw_reference_valid &&
+            now - pad_yaw_reference_time < std::chrono::milliseconds{500}) {
+            static constexpr float Pi = 3.14159265f;
+            const Vec3 forward = Rotate(pad_attitude, {0.0f, 0.0f, -1.0f});
+            float turn = pad_yaw_reference - std::atan2(-forward.x, -forward.z);
+            turn -= 2.0f * Pi * std::round(turn / (2.0f * Pi));
+            pad_attitude = Normalize(Multiply(FromAxisAngle(Up, turn), pad_attitude));
+        }
         pad_attitude_valid = true;
     } else {
         // The gyroscope reports the turn in the controller's own frame.
@@ -568,6 +578,14 @@ void Runtime::UpdatePadGyro(const Vec3& angular_velocity) {
     ++pad.sequence;
     pad.tracked = true;
     pad_position_tracked = false;
+}
+
+std::optional<Quat> Runtime::PadAttitudeInHost() const {
+    std::scoped_lock lock{mutex};
+    if (!pad_attitude_valid) {
+        return std::nullopt;
+    }
+    return Normalize(Multiply(seat_yaw, pad_attitude));
 }
 
 void Runtime::ResetPadYaw() {

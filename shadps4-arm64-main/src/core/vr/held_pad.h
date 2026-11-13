@@ -95,6 +95,46 @@ inline Quat FromAxes(const Vec& right, const Vec& up, const Vec& back) {
     return {q.x / length, q.y / length, q.z / length, q.w / length};
 }
 
+inline Vec Add(const Vec& a, const Vec& b) {
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+/// `a` after `b`.
+inline Quat Multiply(const Quat& a, const Quat& b) {
+    return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+            a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+            a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+}
+
+inline Quat Conjugate(const Quat& q) {
+    return {-q.x, -q.y, -q.z, q.w};
+}
+
+inline Quat Normalize(const Quat& q) {
+    const float length = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    return length > 1e-9f ? Quat{q.x / length, q.y / length, q.z / length, q.w / length} : Quat{};
+}
+
+/// The angle between two attitudes, 0 to pi.
+inline float AngleBetween(const Quat& a, const Quat& b) {
+    const float dot = std::fabs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
+    return 2.0f * std::acos(dot < 1.0f ? dot : 1.0f);
+}
+
+/// Heading of an attitude: 0 when its front (-Z) points straight ahead, positive to the left.
+inline float YawOf(const Quat& attitude) {
+    const Vec front = Rotate(attitude, {0.0f, 0.0f, -1.0f});
+    return std::atan2(-front.x, -front.z);
+}
+
+/// The middle of the gamepad, from halfway between the palms and how it is turned (by its own
+/// motion sensors, say): the palms close around the grips, which sit behind and below the
+/// middle. (Locate makes the same allowance, along the level heading it can see.)
+inline Vec CentreFrom(const Vec& middle_of_palms, const Quat& attitude) {
+    return Add(middle_of_palms, Rotate(attitude, {0.0f, 0.015f, -0.035f}));
+}
+
 /// Part of the way from one attitude to another: `blend` of it, 0 to 1.
 inline Quat Towards(const Quat& from, const Quat& to, float blend) {
     // (The same attitude has two quaternions: the nearer one.)

@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "common/types.h"
@@ -137,6 +138,9 @@ struct Config {
     /// to be presented when they calibrate.
     Vec3 pad_offset{0.0f, -0.17f, -0.50f};
     bool pad_follows_head{true};
+    /// Degrees added to how far the hands around a gamepad point up, for how far its front
+    /// points up: for a host that places the gamepad by the hands (HeldPad::Locate's tilt).
+    float pad_tilt{0.0f};
 };
 
 class Runtime {
@@ -208,6 +212,9 @@ public:
         std::scoped_lock lock{mutex};
         return pad_attitude_valid;
     }
+    /// How the controller's motion sensors have it turned, in the host's own space (as
+    /// UpdatePadHeldOrientation takes it): for a host that places it by the hands around it.
+    std::optional<Quat> PadAttitudeInHost() const;
 
     /// What a player does with the controller about the view itself, where no application
     /// around the emulator sees to it: the first press of X once the headset shows the game
